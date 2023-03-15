@@ -1,0 +1,85 @@
+---
+- name: Recover failed server or application
+  hosts: recovery-server
+  become: true
+  vars:
+    backup_location: /path/to/backup
+    backup_file: latest.tar.gz
+    new_server_hostname: new-server.example.com
+    new_server_ip: 192.0.2.1
+    new_server_user: ansible
+    new_server_password: password
+    image_name: "ubuntu-20.04"
+    flavor_name: "m1.small"
+    network_name: "private"
+    security_group_name: "default"
+    keypair_name: "my-keypair"
+    server_name: "my-server"
+    auth:
+      auth_url: "http://openstack.example.com:5000/v3"
+      project_name: "my-project"
+      username: "my-username"
+      password: "my-password"
+      domain_name: "my-domain"
+    wait: yes
+  tasks:
+    - name: Download latest backup
+      get_url:
+        url: "{{ backup_location }}/{{ backup_file }}"
+        dest: "{{ backup_file }}"
+    - name: Extract backup
+      unarchive:
+        src: "{{ backup_file }}"
+        dest: /tmp
+        remote_src: yes
+    - name: Gather image facts
+      os_image_facts:
+        auth: "{{ auth }}"
+        name: "{{ image_name }}"
+      register: image
+
+    - name: Gather flavor facts
+      os_flavor_facts:
+        auth: "{{ auth }}"
+        name: "{{ flavor_name }}"
+      register: flavor
+
+    - name: Gather network facts
+      os_network_facts:
+        auth: "{{ auth }}"
+        name: "{{ network_name }}"
+      register: network
+
+    - name: Gather security group facts
+      os_security_group_facts:
+        auth: "{{ auth }}"
+        name: "{{ security_group_name }}"
+      register: security_group
+
+    - name: Provision server
+      os_server:
+        auth: "{{ auth }}"
+        name: "{{ server_name }}"
+        image_id: "{{ image.images[0].id }}"
+        flavor_id: "{{ flavor.flavors[0].id }}"
+        nics:
+          - net-id: "{{ network.networks[0].id }}"
+        security_groups:
+          - name: "{{ security_group_name }}"
+        key_name: "{{ keypair_name }}"
+        wait: "{{ wait }}"
+    - name: Copy backup to new server
+      copy:
+        src: "/tmp/backup/"
+        dest: "/tmp/backup/"
+        remote_src: yes
+        become: true
+        become_user: "{{ new_server_user }}"
+        become_method: sudo
+      delegate_to: "{{ new_server_hostname }}"
+    - name: Restore backup on new server
+      shell: tar xzf /tmp/backup/{{ backup_file }} -C / --numeric-owner --preserve-permissions
+      become: true
+      become_user: "{{ new_server_user }}"
+      become_method: sudo
+      delegate_to: "{{ new_server_hostname }}"
